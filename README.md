@@ -22,7 +22,11 @@ The *get_air_data* component is used to fetch data from bigquery and its output 
 The *sequential_model* component is used for model training and evaluation. We have transformed the data, created and saved the darts model based on model type parameter and evaluate model based on MAPE, MSE, and RMSE metrics. This metrics got log in the metadata using metrics output which can be seen in the console. We have logged hyperparameters of the model in metadata using model output which can be seen in the console.
 <br>
 <br>
-**c) Model Deployment** <br>
+**c) Model Logging** <br>
+The *push_to_model_registry* component is for uploading the model to Model Registry. This is to log the models and keep track of different versions.
+<br>
+<br>
+**d) Model Deployment** <br>
 The *deploy_to_run* component is for deploying model. We have used Cloud Build to automate builds and deployments to Cloud Run by using Cloud Build trigger to automatically build and deploy our code whenever new commits are pushed to our Git repository. Here we are pushing our trained model to the Git repository.
 <br>
 
