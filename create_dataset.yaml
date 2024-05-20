@@ -1,0 +1,59 @@
+name: Get air data
+outputs:
+- {name: output_data_path, type: Dataset}
+implementation:
+  container:
+    image: gcr.io/impact-analytics-sandbox/create_base_image:v1
+    command:
+    - sh
+    - -c
+    - |2
+
+      if ! [ -x "$(command -v pip)" ]; then
+          python3 -m ensurepip || python3 -m ensurepip --user || apt-get install python3-pip
+      fi
+
+      PIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet     --no-warn-script-location 'kfp==1.8.9' && "$0" "$@"
+    - sh
+    - -ec
+    - |
+      program_path=$(mktemp -d)
+      printf "%s" "$0" > "$program_path/ephemeral_component.py"
+      python3 -m kfp.v2.components.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+    - |2+
+
+      import kfp
+      from kfp.v2 import dsl
+      from kfp.v2.dsl import *
+      from typing import *
+
+      def get_air_data(
+          #bq_table: str,
+          output_data_path: OutputPath("Dataset")
+      ):
+          from google.cloud import bigquery
+          import pandas as pd
+          bqclient = bigquery.Client(project="impact-analytics-sandbox")
+
+          # Download query results.
+          query_string = """
+          SELECT *
+          FROM `impact-analytics-sandbox.poc_dataset.AirPassengersDataset`
+          """
+          # get dataframe by querying bigquery table
+          air_df = (
+              bqclient.query(query_string)
+                  .result()
+                  .to_dataframe(
+                  create_bqstorage_client=True,
+              )
+          )
+
+          air_df.to_csv(output_data_path,index=False)
+          print(output_data_path)
+
+    args:
+    - --executor_input
+    - {executorInput: null}
+    - --function_to_execute
+    - get_air_data

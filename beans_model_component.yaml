@@ -1,0 +1,103 @@
+name: Sequential model
+inputs:
+- {name: dataset, type: Dataset}
+- {name: model_type, type: String}
+outputs:
+- {name: model, type: Model}
+- {name: metrics, type: Metrics}
+- {name: model_path, type: Model}
+- {name: tar_path, type: String}
+implementation:
+  container:
+    image: gcr.io/impact-analytics-sandbox/create_base_image:v1
+    command:
+    - sh
+    - -c
+    - |2
+
+      if ! [ -x "$(command -v pip)" ]; then
+          python3 -m ensurepip || python3 -m ensurepip --user || apt-get install python3-pip
+      fi
+
+      PIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet     --no-warn-script-location 'kfp==1.8.9' && "$0" "$@"
+    - sh
+    - -ec
+    - |
+      program_path=$(mktemp -d)
+      printf "%s" "$0" > "$program_path/ephemeral_component.py"
+      python3 -m kfp.v2.components.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+    - "\nimport kfp\nfrom kfp.v2 import dsl\nfrom kfp.v2.dsl import *\nfrom typing\
+      \ import *\n\ndef sequential_model(\n    dataset:  Input[Dataset],\n    model_type:\
+      \ str,\n    model: Output[Model],\n    metrics: Output[Metrics],\n    model_path:\
+      \ OutputPath(\"Model\"),\n) -> NamedTuple('ExampleOutputs', [('tar_path', str)]):\n\
+      \    import pandas as pd\n    import numpy as np\n    import torch\n    import\
+      \ matplotlib.pyplot as plt\n    import json\n    from darts import TimeSeries\n\
+      \    from darts.utils.timeseries_generation import (\n        gaussian_timeseries,\n\
+      \        linear_timeseries,\n        sine_timeseries,\n    )\n    from darts.models\
+      \ import RNNModel\n    from darts.metrics import mape, mse, rmse\n    from darts.dataprocessing.transformers\
+      \ import Scaler\n    from darts.utils.timeseries_generation import datetime_attribute_timeseries\n\
+      \    from google.cloud import storage\n    import glob\n    import shutil\n\
+      \    from collections import namedtuple\n    from typing import NamedTuple\n\
+      \    def upload_blob(bucket_name, source_file_name, destination_blob_name):\n\
+      \        \"\"\"Uploads a file to the bucket.\"\"\"\n\n        storage_client\
+      \ = storage.Client()\n        bucket = storage_client.bucket(bucket_name)\n\
+      \        blob = bucket.blob(destination_blob_name)\n\n        blob.upload_from_filename(source_file_name)\n\
+      \n        print(\n            \"File {} uploaded to {}.\".format(\n        \
+      \        source_file_name, destination_blob_name\n            )\n        ) \
+      \   \n    # Data Preparation\n    air_df = pd.read_csv(dataset.path)\n    air_df['Month']=pd.to_datetime(air_df['Month'])\n\
+      \    air_df.sort_values(by=\"Month\",inplace=True)\n    air_df.index = air_df['Month']\n\
+      \    air_df.drop(\"Month\",inplace=True,axis=1)\n    series = TimeSeries.from_dataframe(air_df)\n\
+      \    # Create training and validation sets:\n    train, val = series.split_after(pd.Timestamp(\"\
+      19590101\"))\n\n    # Normalize the time series (note: we avoid fitting the\
+      \ transformer on the validation set)\n    transformer = Scaler()\n    train_transformed\
+      \ = transformer.fit_transform(train)\n    val_transformed = transformer.transform(val)\n\
+      \    series_transformed = transformer.transform(series)\n\n    # create month\
+      \ and year covariate series\n    year_series = datetime_attribute_timeseries(\n\
+      \        pd.date_range(start=series.start_time(), freq=series.freq_str, periods=1000),\n\
+      \        attribute=\"year\",\n        one_hot=False,\n    )\n    year_series\
+      \ = Scaler().fit_transform(year_series)\n    month_series = datetime_attribute_timeseries(\n\
+      \        year_series, attribute=\"month\", one_hot=True\n    )\n    covariates\
+      \ = year_series.stack(month_series)\n    cov_train, cov_val = covariates.split_after(pd.Timestamp(\"\
+      19590101\"))\n\n\n    #setting hyperparameters\n    hidden_dim=20\n    dropout=0\n\
+      \    batch_size=16\n    epochs=300\n    learning_rate=1e-3\n    optimizer_kwargs={\"\
+      lr\":learning_rate }\n    model_name=\"Air_\"+model_type\n    log_tensorboard=True\n\
+      \    random_state=42\n    training_length=20\n    input_chunk_length=14\n  \
+      \  force_reset=True\n    save_checkpoints=True\n    # Model Creation\n    my_model\
+      \ = RNNModel(\n        model=model_type,\n        hidden_dim=hidden_dim,\n \
+      \       dropout=dropout,\n        batch_size=batch_size,\n        n_epochs=epochs,\n\
+      \        optimizer_kwargs=optimizer_kwargs,\n        model_name=model_name,\n\
+      \        log_tensorboard=log_tensorboard,\n        random_state=random_state,\n\
+      \        training_length=training_length,\n        input_chunk_length=input_chunk_length,\n\
+      \        force_reset=True,\n        save_checkpoints=True,\n    )\n    my_model.fit(\n\
+      \        train_transformed,\n        future_covariates=covariates,\n       \
+      \ val_series=val_transformed,\n        val_future_covariates=covariates,\n \
+      \       verbose=False,\n    )\n    # metadata about model\n    model.metadata[\"\
+      hidden_dim\"] = hidden_dim\n    model.metadata[\"dropout\"] = dropout\n    model.metadata[\"\
+      batch_size\"] = batch_size\n    model.metadata[\"n_epochs\"]=  epochs\n    model.metadata[\"\
+      learning rate\"] = learning_rate\n    #model.metadata[\"model_name\"]=\"Air_\"\
+      +model_type\n\n    model.metadata[\"random_state\"] = random_state\n    model.metadata[\"\
+      training_length\"] = training_length\n    model.metadata[\"input_chunk_length\"\
+      ] = input_chunk_length\n\n    from datetime import datetime\n    TIMESTAMP =\
+      \ datetime.now().strftime(\"%Y%m%d%H%M%S\")\n    k = glob.glob('darts_logs'\
+      \ + \"/**\", recursive=True)\n    blobs_list = []\n    for i in k:\n       \
+      \ if '.' in i:\n            blobs_list.append(i)\n\n    bucket_name = 'impact-analytics-experiments-bucket01'\n\
+      \n    # Saving ML models to bucket\n    for blob in blobs_list:\n        print(blob)\
+      \    \n        source_file_name = blob \n        destination_blob_name = 'model_logs{}/'.format(TIMESTAMP)+blob\n\
+      \        upload_blob(bucket_name, source_file_name, destination_blob_name)\n\
+      \        if blob.endswith(\".pth.tar\"):\n            path = bucket_name + \"\
+      /\" + destination_blob_name\n\n    my_model.save_model(model_path+ \".pth.tar\"\
+      )\n\n\n\n    # Evaluating model\n    def eval_model(model):\n        pred_series\
+      \ = model.predict(n=26, future_covariates=covariates)\n        mape1 = mape(pred_series,\
+      \ val_transformed)\n        mse1 = mse(pred_series, val_transformed)\n     \
+      \   rmse1 = rmse(pred_series, val_transformed)\n        print(\"MAPE: {:.2f}%\"\
+      .format(mape1))\n        print(\"MSE: {:.2f}%\".format(mse1))\n        print(\"\
+      RMSE: {:.2f}%\".format(rmse1))\n        metrics.log_metric(\"MAPE\",\"{:.2f}%\"\
+      .format(mape1))\n        metrics.log_metric(\"MSE\", \"{}\".format(mse1))\n\
+      \        metrics.log_metric(\"RMSE\", \"{}\".format(rmse1))\n\n    eval_model(my_model)\n\
+      \    example_output = namedtuple('ExampleOutputs', ['tar_path'])\n    return\
+      \ example_output(path)\n\n"
+    args:
+    - --executor_input
+    - {executorInput: null}
+    - --function_to_execute
+    - sequential_model

@@ -1,0 +1,62 @@
+name: Deploy to run
+inputs:
+- {name: tar_path, type: String}
+outputs:
+- {name: output_data_path, type: Dataset}
+implementation:
+  container:
+    image: gcr.io/impact-analytics-sandbox/base_container:v3
+    command:
+    - sh
+    - -c
+    - |2
+
+      if ! [ -x "$(command -v pip)" ]; then
+          python3 -m ensurepip || python3 -m ensurepip --user || apt-get install python3-pip
+      fi
+
+      PIP_DISABLE_PIP_VERSION_CHECK=1 python3 -m pip install --quiet     --no-warn-script-location 'kfp==1.8.9' && "$0" "$@"
+    - sh
+    - -ec
+    - |
+      program_path=$(mktemp -d)
+      printf "%s" "$0" > "$program_path/ephemeral_component.py"
+      python3 -m kfp.v2.components.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+    - |2+
+
+      import kfp
+      from kfp.v2 import dsl
+      from kfp.v2.dsl import *
+      from typing import *
+
+      def deploy_to_run(
+          tar_path: str,
+          output_data_path: OutputPath("Dataset")
+          ):
+          from google.cloud import storage
+          import os
+          from github import Github
+
+
+          storage_client = storage.Client()
+
+          bucket = storage_client.get_bucket(tar_path.split("/")[0])
+          blob = bucket.blob("/".join(tar_path.split("/")[1:]))
+          blob.download_to_filename("/tmp/model.pth.tar")
+
+          g = Github("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")
+
+          repo = g.get_repo("munadkatSearce/darts-model-serving")
+          contents = repo.get_contents("model.pth.tar", ref="main")
+
+          model_file = open("/tmp/model.pth.tar", "rb")
+          file_content=model_file.read()
+          model_file.close()
+
+          repo.update_file(path=contents.path, message="new_model_trained", content=file_content, sha=contents.sha)
+
+    args:
+    - --executor_input
+    - {executorInput: null}
+    - --function_to_execute
+    - deploy_to_run
