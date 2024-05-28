@@ -1,4 +1,4 @@
-# MLOps-with-Vertex-ImpactAnalytics-Workshop
+# MLOps-with-Vertex
 
 ## Description
 The purpose of this repository was to demonstrate creation of kubeflow ML pipelines for Impact analytics.
