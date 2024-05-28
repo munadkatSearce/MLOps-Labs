@@ -41,12 +41,6 @@ After we created the pipeline, we submitted pipeline job for execution. Thus a c
 
 ## Authors and acknowledgment
 - Monark Unadkat
-- Pratik Karnik
-- Aayush Dheemar
-- Kapil Musale
-- Rishabh Pandit
-
 
 ## License
 For open source projects, say how it is licensed.
-
